@@ -1,0 +1,16 @@
+pub(crate) mod delete_secret;
+pub(crate) mod delete_secret_proj;
+pub(crate) mod force_json_error;
+pub(crate) mod get_secret;
+pub(crate) mod get_secret_proj;
+pub(crate) mod healthz;
+pub(crate) mod list_principals;
+pub(crate) mod list_secrets;
+pub(crate) mod list_secrets_project;
+pub(crate) mod me;
+pub(crate) mod put_secret;
+pub(crate) mod put_secret_proj;
+pub(crate) mod revoke_principal;
+pub(crate) mod rotate_principal;
+pub(crate) mod shared;
+pub(crate) mod upsert_principal;

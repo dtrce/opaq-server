@@ -1,0 +1,15 @@
+.git
+.gitignore
+
+target/
+
+opaq.db
+opaq.db-shm
+opaq.db-wal
+opaq.db.key
+*.db
+*.db-shm
+*.db-wal
+*.db.key
+
+.DS_Store

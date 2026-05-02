@@ -1,0 +1,14 @@
+target/
+.DS_Store
+.worktrees/
+
+opaq.db
+opaq.db-shm
+opaq.db-wal
+opaq.db.key
+*.db
+*.db-shm
+*.db-wal
+*.db.key
+
+fly.toml
