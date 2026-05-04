@@ -18,10 +18,7 @@ const KDF_PARALLELISM: u32 = 1;
 
 type HmacSha256 = Hmac<Sha256>;
 
-pub fn derive_master_key(
-    passphrase: &str,
-    salt: &[u8],
-) -> Result<Zeroizing<[u8; 32]>, AppError> {
+pub fn derive_master_key(passphrase: &str, salt: &[u8]) -> Result<Zeroizing<[u8; 32]>, AppError> {
     let params = Params::new(KDF_MEM_KIB, KDF_TIME_COST, KDF_PARALLELISM, Some(32))
         .map_err(|_| AppError::internal("invalid argon2 params"))?;
     let argon = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
@@ -41,7 +38,7 @@ pub fn random_bytes(n: usize) -> Zeroizing<Vec<u8>> {
 pub fn generate_api_key() -> Zeroizing<String> {
     let mut bytes = Zeroizing::new([0u8; 32]);
     rand::thread_rng().fill_bytes(&mut *bytes);
-    Zeroizing::new(format!("{}{}", KEY_PREFIX, hex::encode(&*bytes)))
+    Zeroizing::new(format!("{}{}", KEY_PREFIX, hex::encode(*bytes)))
 }
 
 pub fn hash_key(api_key: &str, pepper: &[u8]) -> Result<Vec<u8>, AppError> {

@@ -19,10 +19,11 @@ pub(crate) async fn upsert_principal(
 
     let role = match body.get("role") {
         Some(serde_json::Value::Null) | None => None,
-        Some(v) => Some(Role::parse(
-            v.as_str()
-                .ok_or_else(|| AppError::validation("role must be a string"))?,
-        )?),
+        Some(v) => {
+            Some(Role::parse(v.as_str().ok_or_else(|| {
+                AppError::validation("role must be a string")
+            })?)?)
+        }
     };
 
     let clear_ttl = body

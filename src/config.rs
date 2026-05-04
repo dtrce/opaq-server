@@ -84,7 +84,10 @@ mod tests {
             "OPAQ_MASTER_KEY" => Some(raw.clone()),
             _ => None,
         });
-        assert_eq!(config.master_passphrase.as_deref().map(|s| s.len()), Some(32));
+        assert_eq!(
+            config.master_passphrase.as_deref().map(|s| s.len()),
+            Some(32)
+        );
         assert!(config.master_key_error.is_none());
     }
 

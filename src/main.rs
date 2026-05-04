@@ -25,8 +25,8 @@ use crate::commands::put_secret::put_secret;
 use crate::commands::put_secret_proj::put_secret_proj;
 use crate::commands::revoke_principal::revoke_principal;
 use crate::commands::rotate_principal::rotate_principal;
-use crate::commands::upsert_principal::upsert_principal;
 use crate::commands::shared::AppState;
+use crate::commands::upsert_principal::upsert_principal;
 use crate::config::ServerConfig;
 use crate::db::Db;
 

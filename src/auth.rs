@@ -93,8 +93,7 @@ pub async fn upsert_principal(
                 ));
             }
             let role = spec.role.unwrap_or(Role::Reader);
-            let created =
-                create_principal(db, pepper, spec.name, role, spec.ttl_seconds).await?;
+            let created = create_principal(db, pepper, spec.name, role, spec.ttl_seconds).await?;
             Ok(UpsertResult::Created(created))
         }
         Some(current) => {
@@ -102,20 +101,18 @@ pub async fn upsert_principal(
             if current.role == Role::Admin && target_role != Role::Admin {
                 let remaining = db.count_active_admins_excluding(current.id).await?;
                 if remaining == 0 {
-                    return Err(AppError::forbidden(
-                        "cannot demote the last admin",
-                    ));
+                    return Err(AppError::forbidden("cannot demote the last admin"));
                 }
             }
 
             if let Some(new_name) = spec.rename {
-                if new_name != current.name {
-                    if db.find_active_principal_by_name(new_name).await?.is_some() {
-                        return Err(AppError::validation(format!(
-                            "principal name '{}' is already in use",
-                            new_name
-                        )));
-                    }
+                if new_name != current.name
+                    && db.find_active_principal_by_name(new_name).await?.is_some()
+                {
+                    return Err(AppError::validation(format!(
+                        "principal name '{}' is already in use",
+                        new_name
+                    )));
                 }
             }
 
@@ -173,7 +170,8 @@ pub async fn rotate_principal_key(
 
     let new_api_key = crypto::generate_api_key();
     let new_key_hash = crypto::hash_key(&new_api_key, pepper)?;
-    db.rotate_principal_key_atomic(current.id, &new_key_hash).await?;
+    db.rotate_principal_key_atomic(current.id, &new_key_hash)
+        .await?;
 
     Ok(CreatedKey {
         id: current.id,
