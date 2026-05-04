@@ -19,8 +19,28 @@ default:
 build-server:
     cargo build --release --bin opaq-server
 
-# Build the server binary and the Docker image.
-release: build-server docker-build
+# Run release pre-flight checks (fmt, clippy, tests, release build).
+release-check:
+    cargo fmt --check
+    cargo clippy --all-targets -- -D warnings
+    cargo test
+    cargo build --release --bin opaq-server
+
+# Verify, tag v$VERSION locally, and push to trigger release workflow. Bump Cargo.toml version manually first.
+release VERSION:
+    @set -e; \
+    if ! git diff --quiet || ! git diff --cached --quiet; then echo "error: working tree not clean" >&2; exit 1; fi; \
+    if [ "$(git rev-parse --abbrev-ref HEAD)" != "main" ]; then echo "error: must be on main branch" >&2; exit 1; fi; \
+    cargo_ver=$(awk -F'"' '/^version = /{print $2; exit}' Cargo.toml); \
+    if [ "$cargo_ver" != "{{VERSION}}" ]; then echo "error: Cargo.toml version ($cargo_ver) != {{VERSION}} — bump it first" >&2; exit 1; fi; \
+    if git rev-parse "v{{VERSION}}" >/dev/null 2>&1; then echo "error: tag v{{VERSION}} already exists" >&2; exit 1; fi; \
+    git fetch origin --tags; \
+    if [ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]; then echo "error: local main not in sync with origin/main" >&2; exit 1; fi
+    just release-check
+    git tag -a "v{{VERSION}}" -m "opaq-server v{{VERSION}}"
+    @echo ""
+    @echo "tagged v{{VERSION}} locally. push to trigger release workflow:"
+    @echo "  git push origin v{{VERSION}}"
 
 # Build the server Docker image.
 docker-build:
