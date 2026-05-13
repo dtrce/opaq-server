@@ -1,6 +1,6 @@
 use salvo::prelude::*;
 
-use super::shared::{require_admin, state};
+use super::shared::{parse_json_request, require_admin, state};
 use crate::auth::{self, Role, UpsertResult, UpsertSpec};
 use crate::error::AppError;
 
@@ -10,7 +10,7 @@ pub(crate) async fn upsert_principal(
     depot: &mut Depot,
 ) -> Result<Json<serde_json::Value>, AppError> {
     require_admin(req, depot).await?;
-    let body: serde_json::Value = req.parse_json().await?;
+    let body = parse_json_request(req).await?;
     let name = body
         .get("name")
         .and_then(|v| v.as_str())

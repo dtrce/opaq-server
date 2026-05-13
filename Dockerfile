@@ -13,7 +13,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates wget gosu \
     && rm -rf /var/lib/apt/lists/*
 
-ENV OPAQ_HOST=0.0.0.0
+ENV OPAQ_HOST=127.0.0.1
 ENV OPAQ_PORT=6727
 ENV OPAQ_DB=/data/opaq.db
 

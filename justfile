@@ -49,13 +49,13 @@ docker-build:
 # Run the server container in the foreground with ephemeral tmpfs storage (data lost on exit).
 docker-run: docker-build
     @[ -n "${OPAQ_MASTER_KEY:-}" ] || { echo "OPAQ_MASTER_KEY must be set in your shell" >&2; exit 1; }
-    docker run --rm --init --name {{container}} -p {{host_port}}:6727 --tmpfs /data:size=256m,uid=1500,gid=1500,mode=0700 -e OPAQ_MASTER_KEY {{image}}; rc=$?; case $rc in 130|143) echo "opaq-server stopped (signal)" >&2; exit 0;; *) exit $rc;; esac
+    docker run --rm --init --name {{container}} -p 127.0.0.1:{{host_port}}:6727 --tmpfs /data:size=256m,uid=1500,gid=1500,mode=0700 -e OPAQ_MASTER_KEY -e OPAQ_HOST=0.0.0.0 {{image}}; rc=$?; case $rc in 130|143) echo "opaq-server stopped (signal)" >&2; exit 0;; *) exit $rc;; esac
 
 # Deploy the server container locally in the background with persistent Docker volume storage.
 docker-deploy: docker-build
     @[ -n "${OPAQ_MASTER_KEY:-}" ] || { echo "OPAQ_MASTER_KEY must be set in your shell" >&2; exit 1; }
     docker rm -f {{container}} >/dev/null 2>&1 || true
-    docker run -d --init --name {{container}} -p {{host_port}}:6727 -v {{volume}}:/data -e OPAQ_MASTER_KEY {{image}}
+    docker run -d --init --name {{container}} -p 127.0.0.1:{{host_port}}:6727 -v {{volume}}:/data -e OPAQ_MASTER_KEY -e OPAQ_HOST=0.0.0.0 {{image}}
 
 # Rebuild and redeploy the local server container.
 docker-restart: docker-stop docker-deploy

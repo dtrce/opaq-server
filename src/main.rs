@@ -8,6 +8,7 @@ mod secrets;
 
 use std::sync::Arc;
 
+use salvo::http::HeaderValue;
 use salvo::prelude::*;
 use zeroize::Zeroizing;
 
@@ -38,9 +39,9 @@ async fn security_headers(
     ctrl: &mut FlowCtrl,
 ) {
     res.headers_mut()
-        .insert("X-Content-Type-Options", "nosniff".parse().unwrap());
+        .insert("X-Content-Type-Options", HeaderValue::from_static("nosniff"));
     res.headers_mut()
-        .insert("X-Frame-Options", "DENY".parse().unwrap());
+        .insert("X-Frame-Options", HeaderValue::from_static("DENY"));
     ctrl.call_next(req, depot, res).await;
 }
 
@@ -95,6 +96,10 @@ async fn run() -> Result<(), String> {
 
     let master_key = crypto::derive_master_key(&passphrase, &meta.kdf_salt)
         .map_err(|e| format!("failed to derive master key: {}", e))?;
+
+    secrets::rewrap_legacy_secret_values(&db, &master_key)
+        .await
+        .map_err(|e| format!("failed to migrate legacy secret ciphertexts: {}", e))?;
 
     let state = Arc::new(AppState {
         db,

@@ -7,6 +7,19 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-05-13
+
+### Security
+- Bind AES-256-GCM ciphertexts to per-secret associated data (`opaq-secret-v1\0{path}\0{type}`). Prevents ciphertext swap/move attacks across rows even with DB write access.
+- Boot-time migration re-wraps legacy ciphertexts in place; reads transparently use the new AAD. Old ciphertexts no longer decrypt after migration.
+- Last-admin protection now ignores expired admins. Expired admin rows no longer satisfy the "at least one admin remaining" gate during revoke/demote.
+- JSON body size limit enforced by the parser (`parse_json_with_max_size`, 1 MiB) instead of trusting the `Content-Length` header. Closes the bypass where a small `Content-Length` was paired with a larger streamed body.
+- Docker image defaults `OPAQ_HOST=127.0.0.1`. `just docker-run` / `just docker-deploy` publish the container on host loopback (`127.0.0.1:{port}:6727`) and set `OPAQ_HOST=0.0.0.0` only inside the container namespace.
+- `SecretData.value` wrapped in `Zeroizing<String>` so plaintext clears on drop in the get/list paths.
+
+### Changed
+- Removed `.unwrap()` from production code paths (`src/main.rs` security-headers middleware now uses `HeaderValue::from_static`). No `unsafe` anywhere in `src/`.
+
 ## [0.1.0] - 2026-05-04
 
 Initial public release.
@@ -35,5 +48,6 @@ Initial public release.
 - Constant-time key comparison via `subtle`.
 - Sensitive material wrapped in `Zeroizing` to clear memory on drop.
 
-[Unreleased]: https://github.com/dtrce/opaq-server/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/dtrce/opaq-server/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/dtrce/opaq-server/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/dtrce/opaq-server/releases/tag/v0.1.0

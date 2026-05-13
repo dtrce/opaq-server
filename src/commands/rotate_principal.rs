@@ -1,6 +1,6 @@
 use salvo::prelude::*;
 
-use super::shared::{extract_principal, state};
+use super::shared::{extract_principal, parse_json_request, state};
 use crate::auth;
 use crate::error::AppError;
 
@@ -10,7 +10,7 @@ pub(crate) async fn rotate_principal(
     depot: &mut Depot,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let ctx = extract_principal(req, depot).await?;
-    let body: serde_json::Value = req.parse_json().await?;
+    let body = parse_json_request(req).await?;
     let name = body
         .get("name")
         .and_then(|v| v.as_str())

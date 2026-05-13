@@ -245,9 +245,14 @@ pub async fn revoke_api_key(db: &Db, caller: &Principal, key_id: i64) -> Result<
     let now = crate::db::now_iso();
     let affected = {
         let conn = db.lock_conn().await;
+        let now_s = crate::db::now_secs() as i64;
         let remaining_admins: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM principals WHERE role = 'admin' AND revoked_at IS NULL AND id != ?1",
-            params![key_id],
+            "SELECT COUNT(*) FROM principals \
+             WHERE role = 'admin' \
+               AND revoked_at IS NULL \
+               AND id != ?1 \
+               AND (expires_at IS NULL OR CAST(expires_at AS INTEGER) > ?2)",
+            params![key_id, now_s],
             |row| row.get(0),
         )?;
         if remaining_admins == 0 {
@@ -340,6 +345,35 @@ mod tests {
         let err = revoke_api_key(&db, &principal, principal.id)
             .await
             .expect_err("last admin revoke should fail");
+
+        assert!(err.to_string().contains("last admin"));
+    }
+
+    #[tokio::test]
+    async fn expired_admin_does_not_preserve_last_active_admin() {
+        let db = test_db().await;
+        let pepper = b"test pepper";
+        let active = create_principal(&db, pepper, "active", Role::Admin, None)
+            .await
+            .expect("create active admin");
+        let expired = create_principal(&db, pepper, "expired", Role::Admin, Some(3600))
+            .await
+            .expect("create expired admin");
+
+        let conn = db.lock_conn().await;
+        conn.execute(
+            "UPDATE principals SET expires_at = ?1 WHERE id = ?2",
+            rusqlite::params!["1", expired.id],
+        )
+        .expect("expire other admin");
+        drop(conn);
+
+        let caller = authenticate(&db, pepper, &active.key)
+            .await
+            .expect("authenticate active admin");
+        let err = revoke_api_key(&db, &caller, active.id)
+            .await
+            .expect_err("expired admin should not count as remaining admin");
 
         assert!(err.to_string().contains("last admin"));
     }

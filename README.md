@@ -117,7 +117,7 @@ Without `OPAQ_MASTER_KEY`, nothing opens. API keys are 256 bits of entropy — g
 
 ### Transport
 
-The server speaks plain HTTP. **There is no built-in TLS.** Run it behind a reverse proxy (Caddy, nginx, Traefik), or restrict it to localhost / a private network. Default bind is `127.0.0.1:6727`. Override with `OPAQ_HOST=0.0.0.0` only after you've put TLS in front. Auth is `Authorization: Bearer opaq_...` on every request.
+The server speaks plain HTTP. **There is no built-in TLS.** Run it behind a reverse proxy (Caddy, nginx, Traefik), or restrict it to localhost / a private network. Default bind is `127.0.0.1:6727`, including the Docker image. The local `just docker-run` / `just docker-deploy` recipes publish the container on host loopback only. Override with `OPAQ_HOST=0.0.0.0` only after you've put TLS in front. Auth is `Authorization: Bearer opaq_...` on every request.
 
 ### Threat model
 

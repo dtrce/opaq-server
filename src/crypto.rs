@@ -1,5 +1,5 @@
 use aes_gcm::{
-    aead::{Aead, KeyInit},
+    aead::{Aead, KeyInit, Payload},
     Aes256Gcm, Nonce,
 };
 use argon2::{Algorithm, Argon2, Params, Version};
@@ -48,14 +48,29 @@ pub fn hash_key(api_key: &str, pepper: &[u8]) -> Result<Vec<u8>, AppError> {
     Ok(mac.finalize().into_bytes().to_vec())
 }
 
+#[cfg(test)]
 pub fn encrypt_value(key: &[u8; 32], plaintext: &[u8]) -> Result<(Vec<u8>, Vec<u8>), AppError> {
+    encrypt_value_with_aad(key, plaintext, &[])
+}
+
+pub fn encrypt_value_with_aad(
+    key: &[u8; 32],
+    plaintext: &[u8],
+    aad: &[u8],
+) -> Result<(Vec<u8>, Vec<u8>), AppError> {
     let cipher =
         Aes256Gcm::new_from_slice(key).map_err(|_| AppError::internal("cipher init failed"))?;
     let mut nonce_bytes = [0u8; 12];
     rand::thread_rng().fill_bytes(&mut nonce_bytes);
     let nonce = Nonce::from_slice(&nonce_bytes);
     let ct = cipher
-        .encrypt(nonce, plaintext)
+        .encrypt(
+            nonce,
+            Payload {
+                msg: plaintext,
+                aad,
+            },
+        )
         .map_err(|_| AppError::internal("encryption failed"))?;
     Ok((ct, nonce_bytes.to_vec()))
 }
@@ -65,6 +80,15 @@ pub fn decrypt_value(
     ciphertext: &[u8],
     nonce: &[u8],
 ) -> Result<Zeroizing<Vec<u8>>, AppError> {
+    decrypt_value_with_aad(key, ciphertext, nonce, &[])
+}
+
+pub fn decrypt_value_with_aad(
+    key: &[u8; 32],
+    ciphertext: &[u8],
+    nonce: &[u8],
+    aad: &[u8],
+) -> Result<Zeroizing<Vec<u8>>, AppError> {
     let cipher =
         Aes256Gcm::new_from_slice(key).map_err(|_| AppError::internal("cipher init failed"))?;
     if nonce.len() != 12 {
@@ -72,7 +96,13 @@ pub fn decrypt_value(
     }
     let nonce = Nonce::from_slice(nonce);
     let pt = cipher
-        .decrypt(nonce, ciphertext)
+        .decrypt(
+            nonce,
+            Payload {
+                msg: ciphertext,
+                aad,
+            },
+        )
         .map_err(|_| AppError::internal("decryption failed"))?;
     Ok(Zeroizing::new(pt))
 }
@@ -107,6 +137,18 @@ mod tests {
         let (mut ct, nonce) = encrypt_value(&key, b"hunter2").expect("encrypt");
         ct[0] ^= 0x01;
         assert!(decrypt_value(&key, &ct, &nonce).is_err());
+    }
+
+    #[test]
+    fn decrypt_with_wrong_associated_data_fails() {
+        let key = generate_master_key();
+        let (ct, nonce) =
+            encrypt_value_with_aad(&key, b"hunter2", b"path=/a/b/c;type=string").expect("encrypt");
+
+        let err = decrypt_value_with_aad(&key, &ct, &nonce, b"path=/a/b/d;type=string")
+            .expect_err("wrong aad should fail");
+
+        assert!(err.to_string().contains("decryption failed"));
     }
 
     #[test]

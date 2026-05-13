@@ -1,6 +1,8 @@
 use std::sync::OnceLock;
 
 use rusqlite::params;
+use serde::ser::SerializeStruct;
+use zeroize::Zeroizing;
 
 use crate::auth::Principal;
 use crate::crypto;
@@ -14,12 +16,10 @@ fn segment_regex() -> &'static regex_lite::Regex {
     })
 }
 
-#[derive(serde::Serialize)]
 pub struct SecretData {
     pub path: String,
-    #[serde(rename = "type")]
     pub value_type: String,
-    pub value: String,
+    pub value: Zeroizing<String>,
 }
 
 #[derive(serde::Serialize)]
@@ -29,11 +29,32 @@ pub struct SecretMeta {
     pub value_type: String,
 }
 
+struct SecretCipherRow {
+    id: i64,
+    path: String,
+    value_type: String,
+    encrypted_val: Vec<u8>,
+    nonce: Vec<u8>,
+}
+
 pub struct ParsedPath<'a> {
     pub workspace: &'a str,
     pub project: &'a str,
     pub env: Option<&'a str>,
     pub key: &'a str,
+}
+
+impl serde::Serialize for SecretData {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut state = serializer.serialize_struct("SecretData", 3)?;
+        state.serialize_field("path", &self.path)?;
+        state.serialize_field("type", &self.value_type)?;
+        state.serialize_field("value", self.value.as_str())?;
+        state.end()
+    }
 }
 
 fn validate_segment(name: &str, seg: &str) -> Result<(), AppError> {
@@ -86,6 +107,69 @@ fn validate_parsed(p: &ParsedPath) -> Result<(), AppError> {
     Ok(())
 }
 
+fn secret_aad(path: &str, value_type: &str) -> Vec<u8> {
+    format!("opaq-secret-v1\0{}\0{}", path, value_type).into_bytes()
+}
+
+fn plaintext_to_string(mut plaintext: Zeroizing<Vec<u8>>) -> Result<Zeroizing<String>, AppError> {
+    String::from_utf8(std::mem::take(&mut *plaintext))
+        .map(Zeroizing::new)
+        .map_err(|_| AppError::internal("decrypted value is not valid UTF-8"))
+}
+
+fn decrypt_secret_value(
+    master_key: &[u8; 32],
+    path: &str,
+    value_type: &str,
+    encrypted_val: &[u8],
+    nonce: &[u8],
+) -> Result<Zeroizing<String>, AppError> {
+    let aad = secret_aad(path, value_type);
+    let plaintext = crate::crypto::decrypt_value_with_aad(master_key, encrypted_val, nonce, &aad)?;
+    plaintext_to_string(plaintext)
+}
+
+pub async fn rewrap_legacy_secret_values(db: &Db, master_key: &[u8; 32]) -> Result<(), AppError> {
+    let rows: Vec<SecretCipherRow> = {
+        let conn = db.lock_conn().await;
+        let mut stmt =
+            conn.prepare("SELECT id, path, value_type, encrypted_val, nonce FROM secrets")?;
+        let collected = stmt
+            .query_map([], |row| {
+                Ok(SecretCipherRow {
+                    id: row.get(0)?,
+                    path: row.get(1)?,
+                    value_type: row.get(2)?,
+                    encrypted_val: row.get(3)?,
+                    nonce: row.get(4)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        collected
+    };
+
+    for row in rows {
+        let aad = secret_aad(&row.path, &row.value_type);
+        if crate::crypto::decrypt_value_with_aad(master_key, &row.encrypted_val, &row.nonce, &aad)
+            .is_ok()
+        {
+            continue;
+        }
+
+        let plaintext = crate::crypto::decrypt_value(master_key, &row.encrypted_val, &row.nonce)?;
+        let (new_encrypted_val, new_nonce) =
+            crate::crypto::encrypt_value_with_aad(master_key, &plaintext, &aad)?;
+        let now = now_iso();
+        let conn = db.lock_conn().await;
+        conn.execute(
+            "UPDATE secrets SET encrypted_val = ?1, nonce = ?2, updated_at = ?3 WHERE id = ?4",
+            params![&new_encrypted_val, &new_nonce, &now, row.id],
+        )?;
+    }
+
+    Ok(())
+}
+
 pub fn parse_path(path: &str) -> Result<ParsedPath<'_>, AppError> {
     let trimmed = path.trim_matches('/');
     let parts: Vec<&str> = trimmed.split('/').collect();
@@ -134,7 +218,9 @@ pub async fn create_or_update(
         return Err(AppError::forbidden("writer role required"));
     }
 
-    let (encrypted_val, nonce) = crypto::encrypt_value(master_key, value.as_bytes())?;
+    let aad = secret_aad(path, value_type);
+    let (encrypted_val, nonce) =
+        crypto::encrypt_value_with_aad(master_key, value.as_bytes(), &aad)?;
     let now = now_iso();
 
     let conn = db.lock_conn().await;
@@ -198,10 +284,7 @@ pub async fn get(
 
     drop(conn);
 
-    let plaintext = crypto::decrypt_value(master_key, &encrypted_val, &nonce)?;
-    let value = std::str::from_utf8(&plaintext)
-        .map_err(|_| AppError::internal("decrypted value is not valid UTF-8"))?
-        .to_owned();
+    let value = decrypt_secret_value(master_key, path, &value_type, &encrypted_val, &nonce)?;
 
     db.audit_log(principal.id, "get_secret", Some(path), None)
         .await?;
@@ -317,10 +400,7 @@ pub async fn list_with_values(
         if !path_in_scope(&path, ws, proj, env, merge_project) {
             continue;
         }
-        let pt = crate::crypto::decrypt_value(master_key, &ct, &nonce)?;
-        let value = std::str::from_utf8(&pt)
-            .map_err(|_| AppError::internal("decrypted value is not valid UTF-8"))?
-            .to_owned();
+        let value = decrypt_secret_value(master_key, &path, &vtype, &ct, &nonce)?;
         out.push(SecretData {
             path,
             value_type: vtype,
@@ -433,7 +513,7 @@ mod tests {
         let data = get(&db, &key, &reader, "/acme/api/prod/SECRET")
             .await
             .expect("reader read");
-        assert_eq!(data.value, "value");
+        assert_eq!(data.value.as_str(), "value");
 
         let err = match create_or_update(
             &db,
@@ -470,9 +550,53 @@ mod tests {
         let data = get(&db, &key, &writer, "/acme/api/prod/SECRET")
             .await
             .expect("writer read");
-        assert_eq!(data.value, "value");
+        assert_eq!(data.value.as_str(), "value");
         delete(&db, &key, &writer, "/acme/api/prod/SECRET")
             .await
             .expect("writer delete");
+    }
+
+    #[tokio::test]
+    async fn legacy_ciphertexts_are_rewrapped_with_associated_data() {
+        let db = test_db().await;
+        let key = crypto::generate_master_key();
+        let reader = principal(Role::Reader);
+        let path = "/acme/api/prod/SECRET";
+        let value_type = "string";
+        let (legacy_ct, legacy_nonce) =
+            crypto::encrypt_value(&key, b"value").expect("legacy encrypt");
+        let now = now_iso();
+
+        {
+            let conn = db.lock_conn().await;
+            conn.execute(
+                "INSERT INTO secrets (path, value_type, encrypted_val, nonce, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![path, value_type, &legacy_ct, &legacy_nonce, &now, &now],
+            )
+            .expect("insert legacy row");
+        }
+
+        rewrap_legacy_secret_values(&db, &key)
+            .await
+            .expect("rewrap legacy rows");
+
+        let data = get(&db, &key, &reader, path)
+            .await
+            .expect("read rewrapped value");
+        assert_eq!(data.value.as_str(), "value");
+
+        let conn = db.lock_conn().await;
+        let (rewrapped_ct, rewrapped_nonce): (Vec<u8>, Vec<u8>) = conn
+            .query_row(
+                "SELECT encrypted_val, nonce FROM secrets WHERE path = ?1",
+                params![path],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("load rewrapped row");
+        assert!(
+            crypto::decrypt_value(&key, &rewrapped_ct, &rewrapped_nonce).is_err(),
+            "rewrapped value must not decrypt without associated data"
+        );
     }
 }

@@ -182,10 +182,14 @@ impl Db {
 
     pub async fn count_active_admins_excluding(&self, id: i64) -> Result<i64, AppError> {
         let conn = self.lock_conn().await;
+        let now_s = now_secs() as i64;
         let n: i64 = conn.query_row(
             "SELECT COUNT(*) FROM principals \
-             WHERE role = 'admin' AND revoked_at IS NULL AND id != ?1",
-            rusqlite::params![id],
+             WHERE role = 'admin' \
+               AND revoked_at IS NULL \
+               AND id != ?1 \
+               AND (expires_at IS NULL OR CAST(expires_at AS INTEGER) > ?2)",
+            rusqlite::params![id, now_s],
             |r| r.get(0),
         )?;
         Ok(n)

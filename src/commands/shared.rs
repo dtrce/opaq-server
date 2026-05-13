@@ -8,6 +8,8 @@ use crate::db::Db;
 use crate::error::AppError;
 use crate::secrets;
 
+pub(crate) const REQUEST_BODY_MAX_BYTES: usize = 1024 * 1024;
+
 pub(crate) struct AppState {
     pub(crate) db: Db,
     pub(crate) key_pepper: Zeroizing<Vec<u8>>,
@@ -98,17 +100,18 @@ fn check_content_type(req: &Request) -> Result<(), AppError> {
     Ok(())
 }
 
-fn check_body_size(req: &Request) -> Result<(), AppError> {
-    if let Some(len) = req.headers().get("content-length") {
-        if let Ok(s) = len.to_str() {
-            if let Ok(n) = s.parse::<u64>() {
-                if n > 1024 * 1024 {
-                    return Err(AppError::validation("request body too large"));
-                }
+pub(crate) async fn parse_json_request(req: &mut Request) -> Result<serde_json::Value, AppError> {
+    check_content_type(req)?;
+    req.parse_json_with_max_size(REQUEST_BODY_MAX_BYTES)
+        .await
+        .map_err(|err| {
+            let msg = err.to_string();
+            if msg.to_ascii_lowercase().contains("length limit") {
+                AppError::validation("request body too large")
+            } else {
+                AppError::from(err)
             }
-        }
-    }
-    Ok(())
+        })
 }
 
 pub(crate) async fn put_at(
@@ -116,10 +119,8 @@ pub(crate) async fn put_at(
     depot: &mut Depot,
     path: &str,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    check_content_type(req)?;
-    check_body_size(req)?;
     let ctx = extract_principal(req, depot).await?;
-    let body: serde_json::Value = req.parse_json().await?;
+    let body = parse_json_request(req).await?;
     let value = body["value"]
         .as_str()
         .ok_or_else(|| AppError::validation("missing 'value'"))?;
@@ -158,4 +159,27 @@ pub(crate) async fn delete_at(
     let st = state(depot)?;
     secrets::delete(&st.db, &ctx.master_key, &ctx.principal, path).await?;
     Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn parse_json_request_rejects_bodies_over_limit_without_trusting_content_length() {
+        let oversized_value = "x".repeat(REQUEST_BODY_MAX_BYTES + 1);
+        let body = serde_json::json!({ "value": oversized_value }).to_string();
+        let mut req = Request::new();
+        req.headers_mut().insert(
+            "content-type",
+            "application/json".parse().expect("valid header"),
+        );
+        req.replace_body(salvo::http::ReqBody::from(body));
+
+        let err = parse_json_request(&mut req)
+            .await
+            .expect_err("oversized json should be rejected");
+
+        assert!(err.to_string().contains("body"));
+    }
 }
